@@ -3,18 +3,11 @@ app.py
 
 Main entry point for the Tkinter GUI.
 
-Module 2 (final) changes:
-    - Removed the in-memory self.tasks list — now backed by real SQLite
-      persistence via persistence/db.py (add_task, get_all_tasks).
-    - On startup, loads existing tasks from the database instead of
-      starting empty.
-    - On submit, fills in the fields db.py requires that TaskForm doesn't
-      collect (id, status, created_at), then calls db.add_task().
-    - Added a schedulability warning banner wired to
-      core/schedulability.py's check_schedulability().
-
-Run from Personal_Task_Scheduler/src with:
-    python -m task_scheduler.gui.app
+Module 3 frontend changes:
+    - Replaced the text-based schedule display with the visual GanttView.
+    - Wired task mutation and startup load through core.rescheduler instead
+      of manual db + scheduler sequence.
+    - Extracted warning banner update logic to a helper for shared use.
 """
 
 import tkinter as tk
@@ -22,10 +15,10 @@ from tkinter import ttk
 import uuid
 from datetime import datetime
 
-from task_scheduler.core.scheduler import generate_schedule
-from task_scheduler.core.schedulability import check_schedulability
 from task_scheduler.persistence import db
 from task_scheduler.gui.task_form import TaskForm
+from task_scheduler.core import rescheduler
+from task_scheduler.gui.gantt_view import GanttView
 
 
 class App(tk.Tk):
@@ -49,7 +42,7 @@ class App(tk.Tk):
             justify="left",
             pady=6,
         )
-        # Not packed yet — only shown when infeasible (see refresh_schedule)
+        # Not packed yet — only shown when infeasible (see _update_warning_banner)
 
         # --- Task entry form ---
         self.task_form = TaskForm(self, on_submit=self.handle_new_task)
@@ -58,12 +51,15 @@ class App(tk.Tk):
         ttk.Separator(self, orient="horizontal").pack(side="top", fill="x", pady=5)
 
         # --- Schedule display ---
-        ttk.Label(self, text="Current Schedule (EDF order):", font=("TkDefaultFont", 10, "bold")).pack(
-            side="top", anchor="w", padx=10
-        )
+        self.gantt_view = GanttView(self, on_task_hover=self._show_task_details)
+        self.gantt_view.pack(side="top", padx=10, pady=(0, 10), fill="both", expand=True)
 
-        self.schedule_text = tk.Text(self, height=20, width=80, state="disabled")
-        self.schedule_text.pack(side="top", padx=10, pady=(0, 10), fill="both", expand=True)
+        # --- Details Panel ---
+        self.details_frame = ttk.LabelFrame(self, text="Task Details")
+        self.details_frame.pack(side="top", fill="x", padx=10, pady=(0, 10))
+        
+        self.details_label = tk.Label(self.details_frame, text="Hover over a task to see details", justify="left")
+        self.details_label.pack(side="top", anchor="w", padx=5, pady=5)
 
         # --- Load existing tasks from the database and show them ---
         self.refresh_schedule()
@@ -78,49 +74,44 @@ class App(tk.Tk):
         task["status"] = "pending"
         task["created_at"] = datetime.now()
 
-        db.add_task(self.conn, task)
-        self.refresh_schedule()
+        state = rescheduler.add_task_and_reschedule(self.conn, task)
+        self.gantt_view.animate_to(state["schedule"], state["tasks"])
+        self._update_warning_banner(state["schedulability"])
 
     def refresh_schedule(self):
         """
         Reload all tasks from the database, re-run generate_schedule() and
-        check_schedulability(), and redraw both the schedule display and
-        the warning banner.
+        check_schedulability() using the backend rescheduler, and redraw both the 
+        schedule display and the warning banner using snap-render.
+        Called only on startup.
         """
-        all_tasks = db.get_all_tasks(self.conn)
+        state = rescheduler.build_schedule_state(self.conn)
+        self.gantt_view.render(state["schedule"], state["tasks"])
+        self._update_warning_banner(state["schedulability"])
 
-        # Only pending tasks get scheduled/checked — matches the spec's
-        # rule that in-progress/done tasks aren't re-arranged.
-        pending_tasks = [t for t in all_tasks if t["status"] == "pending"]
-
-        schedule = generate_schedule(pending_tasks) if pending_tasks else []
-
-        # --- Update schedule display ---
-        self.schedule_text.config(state="normal")
-        self.schedule_text.delete("1.0", tk.END)
-
-        if not schedule:
-            self.schedule_text.insert(tk.END, "No tasks yet. Add one above.")
-        else:
-            for entry in schedule:
-                start_str = entry["start"].strftime("%Y-%m-%d %H:%M")
-                end_str = entry["end"].strftime("%H:%M")
-                self.schedule_text.insert(
-                    tk.END, f"{start_str} - {end_str}   {entry['task_name']}\n"
-                )
-
-        self.schedule_text.config(state="disabled")
-
-        # --- Update schedulability warning banner ---
-        if pending_tasks:
-            result = check_schedulability(pending_tasks)
-            if not result["feasible"]:
-                self.warning_label.config(text=f"⚠ {result['message']}")
-                self.warning_label.pack(side="top", fill="x", before=self.task_form)
-            else:
-                self.warning_label.pack_forget()
+    def _update_warning_banner(self, schedulability_result):
+        """
+        Shows or hides the warning banner based on the schedulability result.
+        """
+        if not schedulability_result["feasible"]:
+            self.warning_label.config(text=f"⚠ {schedulability_result['message']}")
+            self.warning_label.pack(side="top", fill="x", before=self.task_form)
         else:
             self.warning_label.pack_forget()
+
+    def _show_task_details(self, task):
+        if not task:
+            self.details_label.config(text="Hover over a task to see details")
+        else:
+            dt_str = task["deadline"].strftime("%Y-%m-%d %H:%M")
+            text = (
+                f"Name: {task['name']}\n"
+                f"Deadline: {dt_str}\n"
+                f"Duration: {task['duration_min']} mins\n"
+                f"Priority: {task['priority']}\n"
+                f"Status: {task['status']}"
+            )
+            self.details_label.config(text=text)
 
     def destroy(self):
         """Close the database connection cleanly when the window is closed."""
