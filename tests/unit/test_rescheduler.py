@@ -11,7 +11,7 @@ class ReschedulerTests(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.conn = db.get_connection(Path(self.tmp_dir.name) / "tasks.db")
-        self.today = datetime(2026, 8, 24)
+        self.today = datetime(2026, 9, 24)
         self.start_time = self.today.replace(hour=8)
 
     def tearDown(self):
@@ -97,6 +97,18 @@ class ReschedulerTests(unittest.TestCase):
 
         self.assertEqual([entry["task_id"] for entry in state["schedule"]], ["task-2"])
         self.assertEqual(len(state["tasks"]), 2)
+
+    def test_state_logs_both_algorithm_outcomes(self):
+        db.add_task(self.conn, self.task("task-1", "Later", 18, 60, 0))
+
+        state = rescheduler.build_schedule_state(
+            self.conn,
+            start_time=self.start_time,
+            now=self.start_time,
+        )
+
+        self.assertEqual(set(state["comparison"]), {"EDF", "FCFS"})
+        self.assertEqual(len(db.get_history(self.conn)), 2)
 
 
 if __name__ == "__main__":

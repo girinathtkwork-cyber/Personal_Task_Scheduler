@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime
 
-from task_scheduler.core.scheduler import generate_schedule
+from task_scheduler.core.scheduler import count_deadline_misses, generate_schedule
 
 
 class SchedulerTests(unittest.TestCase):
@@ -68,6 +68,27 @@ class SchedulerTests(unittest.TestCase):
     def test_rejects_unknown_algorithm(self):
         with self.assertRaises(ValueError):
             generate_schedule([], algorithm="SJF", start_time=self.start_time)
+
+    def test_count_deadline_misses_does_not_count_exact_deadline(self):
+        tasks = [self.task("task-1", "Exact", 8, 30, "High", 0)]
+        tasks[0]["deadline"] = self.start_time.replace(minute=30)
+        schedule = generate_schedule(tasks, start_time=self.start_time)
+
+        self.assertEqual(count_deadline_misses(tasks, schedule), 0)
+
+    def test_fcfs_can_have_more_deadline_misses_than_edf(self):
+        tasks = [
+            self.task("task-1", "Late-created urgent", 9, 30, "High", 20),
+            self.task("task-2", "Early-created later", 18, 30, "Low", 0),
+        ]
+        tasks[0]["deadline"] = self.start_time.replace(minute=30)
+        edf_schedule = generate_schedule(tasks, start_time=self.start_time)
+        fcfs_schedule = generate_schedule(tasks, algorithm="FCFS", start_time=self.start_time)
+
+        self.assertLess(
+            count_deadline_misses(tasks, edf_schedule),
+            count_deadline_misses(tasks, fcfs_schedule),
+        )
 
 
 if __name__ == "__main__":

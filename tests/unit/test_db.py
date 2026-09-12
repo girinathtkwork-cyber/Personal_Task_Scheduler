@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from task_scheduler.persistence import db
@@ -11,7 +11,7 @@ class DatabaseTests(unittest.TestCase):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp_dir.name) / "tasks.db"
         self.conn = db.get_connection(self.db_path)
-        self.now = datetime(2026, 8, 24, 9, 0)
+        self.now = datetime(2026, 9, 24, 9, 0)
 
     def tearDown(self):
         self.conn.close()
@@ -21,7 +21,7 @@ class DatabaseTests(unittest.TestCase):
         task = {
             "id": "task-1",
             "name": "Write OS notes",
-            "deadline": datetime(2026, 8, 24, 18, 0),
+            "deadline": datetime(2026, 9, 24, 18, 0),
             "duration_min": 45,
             "priority": "High",
             "status": "pending",
@@ -37,7 +37,7 @@ class DatabaseTests(unittest.TestCase):
 
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["id"], "task-1")
-        self.assertEqual(tasks[0]["deadline"], datetime(2026, 8, 24, 18, 0))
+        self.assertEqual(tasks[0]["deadline"], datetime(2026, 9, 24, 18, 0))
 
     def test_update_task_status(self):
         db.add_task(self.conn, self.task())
@@ -100,6 +100,29 @@ class DatabaseTests(unittest.TestCase):
     def test_rejects_invalid_status_update(self):
         with self.assertRaises(ValueError):
             db.update_task_status(self.conn, "task-1", "blocked")
+
+    def test_history_round_trip_and_algorithm_filter(self):
+        db.log_history(self.conn, self.now, "EDF", 3, 1)
+        db.log_history(self.conn, self.now, "FCFS", 3, 2)
+
+        self.assertEqual(len(db.get_history(self.conn)), 2)
+        self.assertEqual(db.get_history(self.conn, "edf")[0]["deadlines_missed"], 1)
+
+    def test_rejects_past_deadline_and_aware_datetime(self):
+        with self.assertRaises(ValueError):
+            db.add_task(self.conn, self.task(deadline=datetime(2026, 9, 10, 18)))
+
+        with self.assertRaises(ValueError):
+            db.add_task(
+                self.conn,
+                self.task(deadline=datetime(2026, 9, 24, 18, tzinfo=timezone.utc)),
+            )
+
+    def test_missing_status_and_delete_targets_are_rejected(self):
+        with self.assertRaises(ValueError):
+            db.update_task_status(self.conn, "missing", "done")
+        with self.assertRaises(ValueError):
+            db.delete_task(self.conn, "missing")
 
 
 if __name__ == "__main__":

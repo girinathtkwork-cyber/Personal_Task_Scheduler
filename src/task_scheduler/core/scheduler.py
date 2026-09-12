@@ -77,6 +77,16 @@ def generate_schedule(tasks, algorithm="EDF", start_time=None):
     return timetable
 
 
+def count_deadline_misses(tasks, schedule):
+    """Count scheduled tasks whose timetable end is after their deadline."""
+    deadlines = {task["id"]: task["deadline"] for task in tasks}
+    return sum(
+        1
+        for entry in schedule
+        if entry["task_id"] in deadlines and entry["end"] > deadlines[entry["task_id"]]
+    )
+
+
 if __name__ == "__main__":
     today = datetime(2026, 8, 24)
 

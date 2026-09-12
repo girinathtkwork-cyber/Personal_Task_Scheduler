@@ -1,11 +1,12 @@
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
 DB_PATH = Path(__file__).resolve().parents[3] / "data" / "tasks.db"
 VALID_PRIORITIES = {"High", "Medium", "Low"}
 VALID_STATUSES = {"pending", "in_progress", "done"}
+VALID_ALGORITHMS = {"EDF", "FCFS"}
 
 
 def get_connection(db_path=None):
@@ -36,10 +37,33 @@ def _create_tables(conn):
             created_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            algorithm TEXT NOT NULL,
+            tasks_scheduled INTEGER NOT NULL,
+            deadlines_missed INTEGER NOT NULL
+        )
+    """)
     conn.commit()
 
 
-def validate_task(task):
+def _validate_datetime(value, field_name):
+    if not isinstance(value, datetime):
+        raise ValueError(f"Task {field_name} must be a datetime object.")
+    if value.tzinfo is not None:
+        raise ValueError(f"Task {field_name} must be a naive datetime.")
+
+
+def _validate_deadline(deadline, reference_time):
+    if reference_time is not None:
+        _validate_datetime(reference_time, "reference_time")
+        if deadline < reference_time:
+            raise ValueError("Task deadline cannot be in the past.")
+
+
+def validate_task(task, reference_time=None):
     """
     Validate the task shape used by the scheduler, GUI, and persistence layer.
     Raises ValueError with a clear message if the task is not acceptable.
@@ -55,10 +79,9 @@ def validate_task(task):
     if not isinstance(task["name"], str) or not task["name"].strip():
         raise ValueError("Task name must be a non-empty string.")
 
-    if not isinstance(task["deadline"], datetime):
-        raise ValueError("Task deadline must be a datetime object.")
-
-    if not isinstance(task["duration_min"], int) or task["duration_min"] <= 0:
+    _validate_datetime(task["deadline"], "deadline")
+    _validate_deadline(task["deadline"], reference_time)
+    if isinstance(task["duration_min"], bool) or not isinstance(task["duration_min"], int) or task["duration_min"] <= 0:
         raise ValueError("Task duration_min must be a positive integer.")
 
     if task["priority"] not in VALID_PRIORITIES:
@@ -70,16 +93,12 @@ def validate_task(task):
         valid = ", ".join(sorted(VALID_STATUSES))
         raise ValueError(f"Task status must be one of: {valid}.")
 
-    if not isinstance(task["created_at"], datetime):
-        raise ValueError("Task created_at must be a datetime object.")
+    _validate_datetime(task["created_at"], "created_at")
 
 
-def add_task(conn, task):
-    """
-    Save one validated task to the database.
-    deadline and created_at are stored as ISO 8601 datetime strings.
-    """
-    validate_task(task)
+def add_task(conn, task, reference_time=None):
+    """Save one validated task to the database."""
+    validate_task(task, reference_time=reference_time or datetime.now())
 
     conn.execute(
         """INSERT INTO tasks (id, name, deadline, duration_min, priority, status, created_at)
@@ -95,6 +114,49 @@ def add_task(conn, task):
         ),
     )
     conn.commit()
+
+
+def _history_date(value):
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise ValueError("History date must be a date, datetime, or non-empty string.")
+
+
+def log_history(conn, date_value, algorithm, tasks_scheduled, deadlines_missed):
+    """Persist one algorithm outcome for a schedule generation."""
+    normalized_algorithm = algorithm.upper() if isinstance(algorithm, str) else algorithm
+    if normalized_algorithm not in VALID_ALGORITHMS:
+        raise ValueError("algorithm must be 'EDF' or 'FCFS'")
+    if isinstance(tasks_scheduled, bool) or not isinstance(tasks_scheduled, int) or tasks_scheduled < 0:
+        raise ValueError("tasks_scheduled must be a non-negative integer.")
+    if isinstance(deadlines_missed, bool) or not isinstance(deadlines_missed, int) or deadlines_missed < 0:
+        raise ValueError("deadlines_missed must be a non-negative integer.")
+
+    conn.execute(
+        """INSERT INTO history (date, algorithm, tasks_scheduled, deadlines_missed)
+           VALUES (?, ?, ?, ?)""",
+        (_history_date(date_value), normalized_algorithm, tasks_scheduled, deadlines_missed),
+    )
+    conn.commit()
+
+
+def get_history(conn, algorithm=None):
+    """Return persisted schedule outcomes, optionally filtered by algorithm."""
+    if algorithm is not None:
+        normalized_algorithm = algorithm.upper() if isinstance(algorithm, str) else algorithm
+        if normalized_algorithm not in VALID_ALGORITHMS:
+            raise ValueError("algorithm must be 'EDF' or 'FCFS'")
+        rows = conn.execute(
+            "SELECT * FROM history WHERE algorithm = ? ORDER BY id",
+            (normalized_algorithm,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM history ORDER BY id").fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_all_tasks(conn):
@@ -143,7 +205,10 @@ def update_task(conn, task_id, changes):
 
     updated_task = dict(existing_task)
     updated_task.update(changes)
-    validate_task(updated_task)
+    validate_task(
+        updated_task,
+        reference_time=datetime.now() if "deadline" in changes else None,
+    )
 
     conn.execute(
         """UPDATE tasks
@@ -167,12 +232,17 @@ def update_task_status(conn, task_id, new_status):
         valid = ", ".join(sorted(VALID_STATUSES))
         raise ValueError(f"Task status must be one of: {valid}.")
 
+    if get_task_by_id(conn, task_id) is None:
+        raise ValueError(f"No task found with id: {task_id}")
+
     conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
     conn.commit()
 
 
 def delete_task(conn, task_id):
-    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    if cursor.rowcount == 0:
+        raise ValueError(f"No task found with id: {task_id}")
     conn.commit()
 
 
@@ -183,15 +253,16 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp_dir:
         demo_db = Path(tmp_dir) / "tasks.db"
         conn = get_connection(demo_db)
+        demo_now = datetime.now()
 
         test_task = {
             "id": str(uuid.uuid4()),
             "name": "Test task from db.py",
-            "deadline": datetime(2026, 8, 24, 18, 0),
+            "deadline": demo_now + timedelta(hours=9),
             "duration_min": 30,
             "priority": "Medium",
             "status": "pending",
-            "created_at": datetime(2026, 8, 24, 9, 0),
+            "created_at": demo_now,
         }
         add_task(conn, test_task)
         print("Task added.")

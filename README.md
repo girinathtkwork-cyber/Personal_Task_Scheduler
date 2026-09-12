@@ -6,15 +6,15 @@ This README documents the completed backend work for Modules 1, 2, and 3, explai
 
 ## Current Module Status
 
-Last checked: 2026-09-05
+Last checked: 2026-09-12
 
 | Module | Backend Status | Notes |
 | --- | --- | --- |
 | Module 1 - Core Scheduling Pipeline | Complete | `generate_schedule()` supports EDF, pending-only scheduling, priority tie-breaks, timetable output, and a standalone console demo. |
 | Module 2 - Task Input + Persistence | Complete | SQLite persistence, task CRUD, backend validation, schedulability checking, and backend unit tests are implemented. |
 | Module 3 - Gantt Timeline + Dynamic Reschedule | Complete for backend | Backend reschedule helpers exist for add, edit, delete, status update, and mark-done flows. The frontend can call one helper after each user action and redraw from the returned state. |
-| Module 4 - EDF vs FCFS Comparison | Partially prepared | `generate_schedule()` already supports FCFS. History logging and comparison metrics are still later work. |
-| Module 5 - Polish and Edge Cases | Not started | More validation rules, full demo testing, and GUI polish belong here. |
+| Module 4 - EDF vs FCFS Comparison | Complete for backend | FCFS scheduling, deadline-miss metrics, SQLite history logging, and additive comparison results from the rescheduler are implemented and tested. |
+| Module 5 - Polish and Edge Cases | Complete for backend | Backend validation rejects invalid values, past deadlines, and timezone-aware datetimes; edge cases and the SQLite workflow are covered by tests. GUI polish remains frontend work. |
 
 ## Project Structure
 
@@ -138,6 +138,8 @@ It contains:
 - `update_task(conn, task_id, changes)`
 - `update_task_status(conn, task_id, new_status)`
 - `delete_task(conn, task_id)`
+- `log_history(conn, date_value, algorithm, tasks_scheduled, deadlines_missed)`
+- `get_history(conn, algorithm=None)`
 
 The default database path is:
 
@@ -306,6 +308,14 @@ state = rescheduler.delete_task_and_reschedule(conn, task_id)
 ```
 
 The frontend should use `state["schedule"]` to redraw the Gantt timeline and `state["schedulability"]` for the warning banner.
+
+The state also includes `state["comparison"]`, containing `tasks_scheduled` and
+`deadlines_missed` for both EDF and FCFS. Each state refresh logs one history row
+per algorithm in SQLite.
+
+Backend validation requires naive `datetime` values and rejects a deadline in the
+past when adding a task or editing its deadline. Status-only updates remain
+available for existing tasks, including tasks that have become overdue.
 
 ### In-Progress and Done Task Rule
 
