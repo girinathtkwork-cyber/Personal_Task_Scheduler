@@ -6,18 +6,27 @@ Provides a snap-to render method and an animated transition method.
 """
 
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime, timedelta
 
 # Constants for the visible range of the Gantt chart (hours)
 START_HOUR = 8
 END_HOUR = 22
-CANVAS_HEIGHT = 150
+CANVAS_HEIGHT = 190
+MIN_VISIBLE_HEIGHT = 118
+LEFT_PADDING = 48
+RIGHT_PADDING = 18
+TASK_TOP = 32
+TASK_BOTTOM = 72
+TASK_TEXT_Y = (TASK_TOP + TASK_BOTTOM) / 2
 
 class GanttView(tk.Frame):
     def __init__(self, master=None, on_task_hover=None, **kwargs):
         super().__init__(master, **kwargs)
-        self.canvas = tk.Canvas(self, bg="white", height=CANVAS_HEIGHT)
+        self.configure(height=CANVAS_HEIGHT)
+        self.canvas = tk.Canvas(self, bg="#ffffff", height=CANVAS_HEIGHT, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
+        self.task_font = tkfont.Font(family="Segoe UI", size=8, weight="bold")
         
         self.on_task_hover = on_task_hover
         
@@ -25,6 +34,8 @@ class GanttView(tk.Frame):
         self.current_schedule = []
         self.current_tasks = []
         self.animation_job = None
+        self.resize_job = None
+        self.canvas.bind("<Configure>", self._schedule_resize)
 
     def _handle_hover(self, task):
         if self.on_task_hover:
@@ -47,10 +58,45 @@ class GanttView(tk.Frame):
         
         # Fallback if canvas is not yet drawn
         if width <= 1:
-            width = 680 # roughly the default window width
+            width = 680
         
         fraction = self._get_time_fraction(dt)
-        return fraction * width
+        return LEFT_PADDING + fraction * max(1, width - LEFT_PADDING - RIGHT_PADDING)
+
+    def _draw_axis(self):
+        width = max(self.canvas.winfo_width(), 680)
+        height = max(self.canvas.winfo_height(), MIN_VISIBLE_HEIGHT)
+        plot_right = width - RIGHT_PADDING
+        axis_y = height - 27
+        self.canvas.create_line(LEFT_PADDING, axis_y, plot_right, axis_y, fill="#dce4ee")
+        for hour in range(START_HOUR, END_HOUR + 1, 2):
+            x = LEFT_PADDING + (hour - START_HOUR) / (END_HOUR - START_HOUR) * (
+                plot_right - LEFT_PADDING
+            )
+            self.canvas.create_line(x, 26, x, axis_y, fill="#edf1f6")
+            label = f"{hour:02d}:00"
+            self.canvas.create_text(x, axis_y + 13, text=label, fill="#68778d", font=("Segoe UI", 8))
+        self.canvas.create_text(
+            6,
+            16,
+            text="TIME",
+            anchor="w",
+            fill="#68778d",
+            font=("Segoe UI Semibold", 8),
+        )
+
+    def _schedule_resize(self, _event=None):
+        if self.animation_job or self.resize_job:
+            return
+        self.resize_job = self.after_idle(self._render_after_resize)
+
+    def _render_after_resize(self):
+        self.resize_job = None
+        if self.current_schedule:
+            self.render(self.current_schedule, self.current_tasks)
+        else:
+            self.canvas.delete("all")
+            self._draw_axis()
 
     def _get_color(self, task, now):
         """Determine task color based on deadline urgency."""
@@ -61,6 +107,43 @@ class GanttView(tk.Frame):
             return "#f39c12" # Orange
         else:
             return "#2ecc71" # Green
+
+    def _fit_task_name(self, text, width):
+        available_width = max(0, int(width) - 10)
+        if available_width < self.task_font.measure("..."):
+            return ""
+        if self.task_font.measure(text) <= available_width:
+            return text
+        trimmed = text
+        while trimmed and self.task_font.measure(f"{trimmed}...") > available_width:
+            trimmed = trimmed[:-1]
+        return f"{trimmed.rstrip()}..." if trimmed else ""
+
+    def _draw_task_box(self, x1, x2, color, text, task):
+        label = self._fit_task_name(text, x2 - x1)
+        rect_id = self.canvas.create_rectangle(
+            x1,
+            TASK_TOP,
+            x2,
+            TASK_BOTTOM,
+            fill=color,
+            outline="#ffffff",
+            width=2,
+        )
+        text_id = None
+        if label:
+            text_id = self.canvas.create_text(
+                (x1 + x2) / 2,
+                TASK_TEXT_Y,
+                text=label,
+                fill="#ffffff",
+                anchor="center",
+                font=self.task_font,
+            )
+        for item_id in (rect_id, text_id):
+            if item_id:
+                self.canvas.tag_bind(item_id, "<Enter>", lambda e, t=task: self._handle_hover(t))
+                self.canvas.tag_bind(item_id, "<Leave>", lambda e: self._handle_hover(None))
 
     def render(self, schedule, tasks, now=None):
         """Snaps the schedule onto the canvas, clearing anything previously drawn."""
@@ -75,6 +158,7 @@ class GanttView(tk.Frame):
             self.animation_job = None
 
         self.canvas.delete("all")
+        self._draw_axis()
         
         task_dict = {t["id"]: t for t in tasks}
         
@@ -88,12 +172,7 @@ class GanttView(tk.Frame):
             
             color = self._get_color(task, now)
             
-            rect_id = self.canvas.create_rectangle(x1, 10, x2, 50, fill=color, outline="black")
-            
-            self.canvas.create_text((x1 + x2) / 2, 55, text=entry["task_name"], fill="black", anchor="e", angle=90)
-            
-            self.canvas.tag_bind(rect_id, "<Enter>", lambda e, t=task: self._handle_hover(t))
-            self.canvas.tag_bind(rect_id, "<Leave>", lambda e: self._handle_hover(None))
+            self._draw_task_box(x1, x2, color, entry["task_name"], task)
 
     def animate_to(self, new_schedule, new_tasks, now=None, steps=8, delay_ms=50):
         """Animates the transition from the current schedule to the new schedule."""
@@ -159,6 +238,7 @@ class GanttView(tk.Frame):
     def _animate_step(self, transitions, step, total_steps, delay_ms, final_schedule, final_tasks):
         """Helper to run a single frame of the animation loop."""
         self.canvas.delete("all")
+        self._draw_axis()
         
         progress = step / total_steps
         
@@ -166,28 +246,16 @@ class GanttView(tk.Frame):
             if data["type"] == "move":
                 x1 = data["start_x1"] + (data["end_x1"] - data["start_x1"]) * progress
                 x2 = data["start_x2"] + (data["end_x2"] - data["start_x2"]) * progress
-                rect_id = self.canvas.create_rectangle(x1, 10, x2, 50, fill=data["color"], outline="black")
-                self.canvas.create_text((x1 + x2) / 2, 55, text=data["text"], fill="black", anchor="e", angle=90)
-                if data["task"]:
-                    self.canvas.tag_bind(rect_id, "<Enter>", lambda e, t=data["task"]: self._handle_hover(t))
-                    self.canvas.tag_bind(rect_id, "<Leave>", lambda e: self._handle_hover(None))
+                self._draw_task_box(x1, x2, data["color"], data["text"], data["task"])
             elif data["type"] == "new" and step == total_steps:
                 x1 = data["end_x1"]
                 x2 = data["end_x2"]
-                rect_id = self.canvas.create_rectangle(x1, 10, x2, 50, fill=data["color"], outline="black")
-                self.canvas.create_text((x1 + x2) / 2, 55, text=data["text"], fill="black", anchor="e", angle=90)
-                if data["task"]:
-                    self.canvas.tag_bind(rect_id, "<Enter>", lambda e, t=data["task"]: self._handle_hover(t))
-                    self.canvas.tag_bind(rect_id, "<Leave>", lambda e: self._handle_hover(None))
+                self._draw_task_box(x1, x2, data["color"], data["text"], data["task"])
             elif data["type"] == "remove" and step < total_steps:
                 # Keep them at their old positions until the end
                 x1 = data["start_x1"]
                 x2 = data["start_x2"]
-                rect_id = self.canvas.create_rectangle(x1, 10, x2, 50, fill=data["color"], outline="black")
-                self.canvas.create_text((x1 + x2) / 2, 55, text=data["text"], fill="black", anchor="e", angle=90)
-                if data["task"]:
-                    self.canvas.tag_bind(rect_id, "<Enter>", lambda e, t=data["task"]: self._handle_hover(t))
-                    self.canvas.tag_bind(rect_id, "<Leave>", lambda e: self._handle_hover(None))
+                self._draw_task_box(x1, x2, data["color"], data["text"], data["task"])
                 
         if step < total_steps:
             self.animation_job = self.after(delay_ms, self._animate_step, transitions, step + 1, total_steps, delay_ms, final_schedule, final_tasks)

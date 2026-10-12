@@ -30,7 +30,11 @@ class ReschedulerTests(unittest.TestCase):
         }
 
     def test_add_task_and_reschedule_places_urgent_task_first(self):
-        db.add_task(self.conn, self.task("task-1", "Later report", 18, 60, 0))
+        db.add_task(
+            self.conn,
+            self.task("task-1", "Later report", 18, 60, 0),
+            reference_time=self.start_time,
+        )
 
         state = rescheduler.add_task_and_reschedule(
             self.conn,
@@ -43,8 +47,8 @@ class ReschedulerTests(unittest.TestCase):
         self.assertEqual(len(state["tasks"]), 2)
 
     def test_edit_task_and_reschedule_reorders_pending_tasks(self):
-        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0))
-        db.add_task(self.conn, self.task("task-2", "Email", 12, 15, 5))
+        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0), reference_time=self.start_time)
+        db.add_task(self.conn, self.task("task-2", "Email", 12, 15, 5), reference_time=self.start_time)
 
         state = rescheduler.edit_task_and_reschedule(
             self.conn,
@@ -57,8 +61,8 @@ class ReschedulerTests(unittest.TestCase):
         self.assertEqual([entry["task_id"] for entry in state["schedule"]], ["task-1", "task-2"])
 
     def test_mark_done_and_reschedule_removes_task_from_schedule_only(self):
-        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0))
-        db.add_task(self.conn, self.task("task-2", "Email", 10, 15, 5))
+        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0), reference_time=self.start_time)
+        db.add_task(self.conn, self.task("task-2", "Email", 10, 15, 5), reference_time=self.start_time)
 
         state = rescheduler.mark_done_and_reschedule(
             self.conn,
@@ -72,8 +76,8 @@ class ReschedulerTests(unittest.TestCase):
         self.assertEqual(len(state["pending_tasks"]), 1)
 
     def test_delete_task_and_reschedule_removes_task_from_state(self):
-        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0))
-        db.add_task(self.conn, self.task("task-2", "Email", 10, 15, 5))
+        db.add_task(self.conn, self.task("task-1", "Report", 18, 60, 0), reference_time=self.start_time)
+        db.add_task(self.conn, self.task("task-2", "Email", 10, 15, 5), reference_time=self.start_time)
 
         state = rescheduler.delete_task_and_reschedule(
             self.conn,
@@ -86,8 +90,8 @@ class ReschedulerTests(unittest.TestCase):
         self.assertEqual([task["id"] for task in state["tasks"]], ["task-1"])
 
     def test_in_progress_task_stays_unscheduled(self):
-        db.add_task(self.conn, self.task("task-1", "Current task", 9, 60, 0, status="in_progress"))
-        db.add_task(self.conn, self.task("task-2", "Next task", 10, 30, 5))
+        db.add_task(self.conn, self.task("task-1", "Current task", 9, 60, 0, status="in_progress"), reference_time=self.start_time)
+        db.add_task(self.conn, self.task("task-2", "Next task", 10, 30, 5), reference_time=self.start_time)
 
         state = rescheduler.build_schedule_state(
             self.conn,
@@ -99,7 +103,7 @@ class ReschedulerTests(unittest.TestCase):
         self.assertEqual(len(state["tasks"]), 2)
 
     def test_state_logs_both_algorithm_outcomes(self):
-        db.add_task(self.conn, self.task("task-1", "Later", 18, 60, 0))
+        db.add_task(self.conn, self.task("task-1", "Later", 18, 60, 0), reference_time=self.start_time)
 
         state = rescheduler.build_schedule_state(
             self.conn,

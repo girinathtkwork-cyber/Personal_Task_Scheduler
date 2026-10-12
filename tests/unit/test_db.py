@@ -31,7 +31,7 @@ class DatabaseTests(unittest.TestCase):
         return task
 
     def test_add_and_load_task(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         tasks = db.get_all_tasks(self.conn)
 
@@ -40,7 +40,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(tasks[0]["deadline"], datetime(2026, 9, 24, 18, 0))
 
     def test_update_task_status(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         db.update_task_status(self.conn, "task-1", "done")
 
@@ -48,14 +48,14 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(tasks[0]["status"], "done")
 
     def test_get_task_by_id(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         task = db.get_task_by_id(self.conn, "task-1")
 
         self.assertEqual(task["name"], "Write OS notes")
 
     def test_update_task_keeps_id_and_created_at(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         updated = db.update_task(
             self.conn,
@@ -65,6 +65,7 @@ class DatabaseTests(unittest.TestCase):
                 "duration_min": 60,
                 "priority": "Medium",
             },
+            reference_time=self.now,
         )
 
         self.assertEqual(updated["id"], "task-1")
@@ -73,7 +74,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(db.get_all_tasks(self.conn)[0]["duration_min"], 60)
 
     def test_update_task_rejects_unknown_field(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         with self.assertRaises(ValueError):
             db.update_task(self.conn, "task-1", {"created_at": datetime.now()})
@@ -82,8 +83,19 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             db.update_task(self.conn, "missing", {"name": "Nope"})
 
+    def test_update_deadline_uses_injected_reference_time(self):
+        db.add_task(self.conn, self.task(), reference_time=self.now)
+
+        with self.assertRaises(ValueError):
+            db.update_task(
+                self.conn,
+                "task-1",
+                {"deadline": datetime(2026, 9, 24, 8, 59)},
+                reference_time=self.now,
+            )
+
     def test_delete_task(self):
-        db.add_task(self.conn, self.task())
+        db.add_task(self.conn, self.task(), reference_time=self.now)
 
         db.delete_task(self.conn, "task-1")
 
@@ -91,11 +103,11 @@ class DatabaseTests(unittest.TestCase):
 
     def test_rejects_invalid_duration(self):
         with self.assertRaises(ValueError):
-            db.add_task(self.conn, self.task(duration_min=0))
+            db.add_task(self.conn, self.task(duration_min=0), reference_time=self.now)
 
     def test_rejects_invalid_priority(self):
         with self.assertRaises(ValueError):
-            db.add_task(self.conn, self.task(priority="Urgent"))
+            db.add_task(self.conn, self.task(priority="Urgent"), reference_time=self.now)
 
     def test_rejects_invalid_status_update(self):
         with self.assertRaises(ValueError):
@@ -110,12 +122,17 @@ class DatabaseTests(unittest.TestCase):
 
     def test_rejects_past_deadline_and_aware_datetime(self):
         with self.assertRaises(ValueError):
-            db.add_task(self.conn, self.task(deadline=datetime(2026, 9, 10, 18)))
+            db.add_task(
+                self.conn,
+                self.task(deadline=datetime(2026, 9, 10, 18)),
+                reference_time=self.now,
+            )
 
         with self.assertRaises(ValueError):
             db.add_task(
                 self.conn,
                 self.task(deadline=datetime(2026, 9, 24, 18, tzinfo=timezone.utc)),
+                reference_time=self.now,
             )
 
     def test_missing_status_and_delete_targets_are_rejected(self):

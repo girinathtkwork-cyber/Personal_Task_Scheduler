@@ -43,8 +43,8 @@ class BackendWorkflowTests(unittest.TestCase):
             self.today.replace(hour=18),
             created_minute=0,
         )
-        db.add_task(self.conn, urgent)
-        db.add_task(self.conn, later)
+        db.add_task(self.conn, urgent, reference_time=self.start_time)
+        db.add_task(self.conn, later, reference_time=self.start_time)
         self.conn.close()
 
         self.conn = db.get_connection(self.db_path)

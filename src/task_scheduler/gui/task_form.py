@@ -1,18 +1,4 @@
-"""
-task_form.py
-
-A Tkinter Frame containing the task entry form:
-    Name | Deadline (date + time) | Duration (minutes) | Priority | Submit
-
-This file does NOT talk to a database. Backend's db.py isn't ready yet,
-so on Submit we just build a task dict (matching scheduler.py's expected
-input shape) and hand it off via an on_submit callback. Whatever file
-embeds this form (app.py) decides what to do with that task — for now,
-that will be: append to a local Python list, then re-run generate_schedule().
-
-Expected task dict shape (matches core/scheduler.py's generate_schedule() input):
-    {"name": str, "deadline": datetime, "duration_min": int, "priority": str}
-"""
+"""Reusable task-entry and task-edit form."""
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -33,44 +19,47 @@ class TaskForm(ttk.Frame):
     """
 
     def __init__(self, parent, on_submit):
-        super().__init__(parent, padding=10)
+        super().__init__(parent, padding=(16, 13), style="Card.TFrame")
         self.on_submit = on_submit
+        self.editing_task_id = None
 
-        # --- Name ---
-        ttk.Label(self, text="Task Name:").grid(row=0, column=0, sticky="w", pady=4)
-        self.name_entry = ttk.Entry(self, width=30)
-        self.name_entry.grid(row=0, column=1, columnspan=3, sticky="w", pady=4)
+        self.columnconfigure(1, weight=2)
+        self.columnconfigure(3, weight=1)
+        self.heading = ttk.Label(self, text="Add a task", style="Section.TLabel")
+        self.heading.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
-        # --- Deadline: date + time as separate simple text fields ---
-        # (Spec explicitly allows plain text fields here instead of a date picker)
-        ttk.Label(self, text="Deadline Date (YYYY-MM-DD):").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Task name", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=4)
+        self.name_entry = ttk.Entry(self)
+        self.name_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+
+        ttk.Label(self, text="Deadline date", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=4)
         self.date_entry = ttk.Entry(self, width=15)
-        self.date_entry.grid(row=1, column=1, sticky="w", pady=4)
-
-        ttk.Label(self, text="Time (HH:MM, 24hr):").grid(row=1, column=2, sticky="w", pady=4)
+        self.date_entry.grid(row=2, column=1, sticky="ew", pady=4, padx=(0, 12))
+        ttk.Label(self, text="Time (24-hour)", style="Card.TLabel").grid(row=2, column=2, sticky="w", pady=4)
         self.time_entry = ttk.Entry(self, width=10)
-        self.time_entry.grid(row=1, column=3, sticky="w", pady=4)
+        self.time_entry.grid(row=2, column=3, sticky="ew", pady=4)
 
-        # --- Duration ---
-        ttk.Label(self, text="Duration (minutes):").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Duration (minutes)", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=4)
         self.duration_entry = ttk.Entry(self, width=10)
-        self.duration_entry.grid(row=2, column=1, sticky="w", pady=4)
+        self.duration_entry.grid(row=3, column=1, sticky="ew", pady=4, padx=(0, 12))
 
-        # --- Priority ---
-        ttk.Label(self, text="Priority:").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Priority", style="Card.TLabel").grid(row=3, column=2, sticky="w", pady=4)
         self.priority_var = tk.StringVar(value="Medium")
-        priority_dropdown = ttk.Combobox(
+        self.priority_dropdown = ttk.Combobox(
             self,
             textvariable=self.priority_var,
             values=["High", "Medium", "Low"],
-            state="readonly",  # user can only pick from the list, not type freely
-            width=12,
+            state="readonly",
         )
-        priority_dropdown.grid(row=3, column=1, sticky="w", pady=4)
+        self.priority_dropdown.grid(row=3, column=3, sticky="ew", pady=4)
 
-        # --- Submit ---
-        submit_btn = ttk.Button(self, text="Add Task", command=self._handle_submit)
-        submit_btn.grid(row=4, column=0, columnspan=2, pady=(10, 0), sticky="w")
+        self.submit_button = ttk.Button(self, text="Add task", style="Accent.TButton", command=self._handle_submit)
+        self.submit_button.grid(row=4, column=0, columnspan=2, pady=(9, 0), sticky="w")
+        ttk.Label(
+            self,
+            text="Enter date as YYYY-MM-DD and time as HH:MM",
+            style="Muted.Card.TLabel",
+        ).grid(row=4, column=2, columnspan=2, sticky="e", pady=(9, 0))
 
     def _handle_submit(self):
         """Validate all fields, build a task dict, call on_submit, then clear the form."""
@@ -113,11 +102,29 @@ class TaskForm(ttk.Frame):
             "priority": priority,
         }
 
-        self.on_submit(task)
-        self._clear_form()
+        if self.on_submit(task) is not False:
+            self.reset()
 
-    def _clear_form(self):
-        """Reset all fields after a successful submit, ready for the next task."""
+    def load_task(self, task):
+        """Populate the form to edit an existing task."""
+        self.editing_task_id = task["id"]
+        self.heading.config(text="Edit task")
+        self.submit_button.config(text="Save changes")
+        self.name_entry.delete(0, tk.END)
+        self.name_entry.insert(0, task["name"])
+        self.date_entry.delete(0, tk.END)
+        self.date_entry.insert(0, task["deadline"].strftime("%Y-%m-%d"))
+        self.time_entry.delete(0, tk.END)
+        self.time_entry.insert(0, task["deadline"].strftime("%H:%M"))
+        self.duration_entry.delete(0, tk.END)
+        self.duration_entry.insert(0, str(task["duration_min"]))
+        self.priority_var.set(task["priority"])
+
+    def reset(self):
+        """Return to add-task mode and clear all form values."""
+        self.editing_task_id = None
+        self.heading.config(text="Add a task")
+        self.submit_button.config(text="Add task")
         self.name_entry.delete(0, tk.END)
         self.date_entry.delete(0, tk.END)
         self.time_entry.delete(0, tk.END)

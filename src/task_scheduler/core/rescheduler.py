@@ -58,7 +58,7 @@ def add_task_and_reschedule(conn, task, algorithm="EDF", start_time=None, now=No
 
 
 def edit_task_and_reschedule(conn, task_id, changes, algorithm="EDF", start_time=None, now=None):
-    db.update_task(conn, task_id, changes)
+    db.update_task(conn, task_id, changes, reference_time=now)
     return build_schedule_state(conn, algorithm=algorithm, start_time=start_time, now=now)
 
 

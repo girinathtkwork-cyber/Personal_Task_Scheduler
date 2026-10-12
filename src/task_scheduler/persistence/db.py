@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,7 @@ def get_connection(db_path=None):
 
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     _create_tables(conn)
     return conn
 
@@ -46,7 +48,154 @@ def _create_tables(conn):
             deadlines_missed INTEGER NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS simulation_experiments (
+            id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            baseline_policy TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            result_json TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS simulation_events (
+            experiment_id TEXT NOT NULL,
+            policy TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            simulated_at TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            event_json TEXT NOT NULL,
+            PRIMARY KEY (experiment_id, policy, sequence),
+            FOREIGN KEY (experiment_id) REFERENCES simulation_experiments(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS simulation_decisions (
+            experiment_id TEXT NOT NULL,
+            policy TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            simulated_at TEXT NOT NULL,
+            decision_json TEXT NOT NULL,
+            PRIMARY KEY (experiment_id, policy, sequence),
+            FOREIGN KEY (experiment_id) REFERENCES simulation_experiments(id) ON DELETE CASCADE
+        )
+    """)
     conn.commit()
+
+
+def _json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Cannot serialize value of type {type(value).__name__}.")
+
+
+def save_simulation_experiment(conn, experiment):
+    """Persist experiment input/results separately from ordinary task records."""
+    required = {"id", "created_at", "start_time", "baseline_policy", "runs"}
+    missing = sorted(required - experiment.keys())
+    if missing:
+        raise ValueError(f"Missing simulation experiment field(s): {', '.join(missing)}")
+
+    config = {
+        "context_switch_overhead_min": experiment.get("context_switch_overhead_min", 0),
+        "workload": experiment.get("workload", []),
+        "events_input": experiment.get("events_input", []),
+    }
+    with conn:
+        conn.execute(
+            """INSERT INTO simulation_experiments
+               (id, created_at, start_time, baseline_policy, config_json, result_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                experiment["id"],
+                experiment["created_at"].isoformat(),
+                experiment["start_time"].isoformat(),
+                experiment["baseline_policy"],
+                json.dumps(config, default=_json_default),
+                json.dumps(experiment, default=_json_default),
+            ),
+        )
+        for policy, result in experiment["runs"].items():
+            for sequence, event in enumerate(result.get("events", [])):
+                conn.execute(
+                    """INSERT INTO simulation_events
+                       (experiment_id, policy, sequence, simulated_at, event_type, event_json)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        experiment["id"],
+                        policy,
+                        sequence,
+                        event["at"].isoformat(),
+                        event["kind"],
+                        json.dumps(event, default=_json_default),
+                    ),
+                )
+            for sequence, decision in enumerate(result.get("decisions", [])):
+                conn.execute(
+                    """INSERT INTO simulation_decisions
+                       (experiment_id, policy, sequence, simulated_at, decision_json)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        experiment["id"],
+                        policy,
+                        sequence,
+                        decision["at"].isoformat(),
+                        json.dumps(decision, default=_json_default),
+                    ),
+                )
+    return experiment["id"]
+
+
+def get_simulation_experiment(conn, experiment_id):
+    row = conn.execute(
+        "SELECT * FROM simulation_experiments WHERE id = ?",
+        (experiment_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    result = json.loads(row["result_json"])
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "start_time": row["start_time"],
+        "baseline_policy": row["baseline_policy"],
+        "config": json.loads(row["config_json"]),
+        "result": result,
+    }
+
+
+def get_simulation_experiment_summaries(conn, limit=25):
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer.")
+    rows = conn.execute(
+        """SELECT id, created_at, start_time, baseline_policy, result_json
+           FROM simulation_experiments ORDER BY created_at DESC, id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    summaries = []
+    for row in rows:
+        result = json.loads(row["result_json"])
+        summaries.append({
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "start_time": row["start_time"],
+            "baseline_policy": row["baseline_policy"],
+            "policies": list(result["runs"]),
+            "deadline_misses": {
+                policy: run["metrics"]["deadline_misses"]
+                for policy, run in result["runs"].items()
+            },
+            "tasks_completed": {
+                policy: run["metrics"]["tasks_completed"]
+                for policy, run in result["runs"].items()
+            },
+            "cpu_utilization": {
+                policy: run["metrics"]["cpu_utilization"]
+                for policy, run in result["runs"].items()
+            },
+        })
+    return summaries
 
 
 def _validate_datetime(value, field_name):
@@ -187,7 +336,7 @@ def get_task_by_id(conn, task_id):
     return task
 
 
-def update_task(conn, task_id, changes):
+def update_task(conn, task_id, changes, reference_time=None):
     """
     Update editable fields for an existing task.
 
@@ -207,7 +356,7 @@ def update_task(conn, task_id, changes):
     updated_task.update(changes)
     validate_task(
         updated_task,
-        reference_time=datetime.now() if "deadline" in changes else None,
+        reference_time=(reference_time or datetime.now()) if "deadline" in changes else None,
     )
 
     conn.execute(
