@@ -33,6 +33,8 @@ class GanttView(tk.Frame):
         # State tracking for animation
         self.current_schedule = []
         self.current_tasks = []
+        self.visible_start = None
+        self.visible_end = None
         self.animation_job = None
         self.resize_job = None
         self.canvas.bind("<Configure>", self._schedule_resize)
@@ -42,13 +44,28 @@ class GanttView(tk.Frame):
             self.on_task_hover(task)
 
     def _get_time_fraction(self, dt):
-        """Helper to get the fraction of the day elapsed between START_HOUR and END_HOUR."""
-        hour_fraction = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
-        if hour_fraction < START_HOUR:
+        """Map a full date and time onto the currently visible timeline."""
+        if self.visible_start is None or self.visible_end is None:
             return 0.0
-        if hour_fraction > END_HOUR:
-            return 1.0
-        return (hour_fraction - START_HOUR) / (END_HOUR - START_HOUR)
+        span = (self.visible_end - self.visible_start).total_seconds()
+        if span <= 0:
+            return 0.0
+        return min(1.0, max(0.0, (dt - self.visible_start).total_seconds() / span))
+
+    def _set_visible_range(self, schedule):
+        if not schedule:
+            today = datetime.now().replace(hour=START_HOUR, minute=0, second=0, microsecond=0)
+            self.visible_start = today
+            self.visible_end = today + timedelta(hours=END_HOUR - START_HOUR)
+            return
+        first = min(entry["start"] for entry in schedule)
+        last = max(entry["end"] for entry in schedule)
+        self.visible_start = first.replace(minute=0, second=0, microsecond=0) - timedelta(minutes=30)
+        self.visible_end = last.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1, minutes=30)
+        if self.visible_end - self.visible_start < timedelta(hours=6):
+            midpoint = self.visible_start + (self.visible_end - self.visible_start) / 2
+            self.visible_start = midpoint - timedelta(hours=3)
+            self.visible_end = midpoint + timedelta(hours=3)
 
     def time_to_pixel(self, dt):
         """Linear map from a datetime's clock time to an x-coordinate."""
@@ -69,13 +86,19 @@ class GanttView(tk.Frame):
         plot_right = width - RIGHT_PADDING
         axis_y = height - 27
         self.canvas.create_line(LEFT_PADDING, axis_y, plot_right, axis_y, fill="#dce4ee")
-        for hour in range(START_HOUR, END_HOUR + 1, 2):
-            x = LEFT_PADDING + (hour - START_HOUR) / (END_HOUR - START_HOUR) * (
-                plot_right - LEFT_PADDING
-            )
+        start = self.visible_start or datetime.now().replace(hour=START_HOUR, minute=0, second=0, microsecond=0)
+        end = self.visible_end or start + timedelta(hours=END_HOUR - START_HOUR)
+        span_hours = max(1, (end - start).total_seconds() / 3600)
+        step_hours = 1 if span_hours <= 12 else (2 if span_hours <= 36 else 4)
+        tick = start.replace(minute=0, second=0, microsecond=0)
+        if tick < start:
+            tick += timedelta(hours=1)
+        while tick <= end:
+            x = LEFT_PADDING + (tick - start).total_seconds() / (end - start).total_seconds() * (plot_right - LEFT_PADDING)
             self.canvas.create_line(x, 26, x, axis_y, fill="#edf1f6")
-            label = f"{hour:02d}:00"
+            label = tick.strftime("%m-%d %H:%M" if start.date() != end.date() else "%H:%M")
             self.canvas.create_text(x, axis_y + 13, text=label, fill="#68778d", font=("Segoe UI", 8))
+            tick += timedelta(hours=step_hours)
         self.canvas.create_text(
             6,
             16,
@@ -127,7 +150,7 @@ class GanttView(tk.Frame):
             x2,
             TASK_BOTTOM,
             fill=color,
-            outline="#ffffff",
+            outline="#174c3b",
             width=2,
         )
         text_id = None
@@ -152,6 +175,7 @@ class GanttView(tk.Frame):
             
         self.current_schedule = schedule
         self.current_tasks = tasks
+        self._set_visible_range(schedule)
         
         if self.animation_job:
             self.after_cancel(self.animation_job)
@@ -162,7 +186,7 @@ class GanttView(tk.Frame):
         
         task_dict = {t["id"]: t for t in tasks}
         
-        for entry in schedule:
+        for index, entry in enumerate(schedule):
             task = task_dict.get(entry["task_id"])
             if not task:
                 continue
@@ -173,6 +197,8 @@ class GanttView(tk.Frame):
             color = self._get_color(task, now)
             
             self._draw_task_box(x1, x2, color, entry["task_name"], task)
+            if index:
+                self.canvas.create_line(x1, TASK_TOP - 3, x1, TASK_BOTTOM + 3, fill="#17324d", width=3)
 
     def animate_to(self, new_schedule, new_tasks, now=None, steps=8, delay_ms=50):
         """Animates the transition from the current schedule to the new schedule."""
@@ -181,6 +207,8 @@ class GanttView(tk.Frame):
             
         if self.animation_job:
             self.after_cancel(self.animation_job)
+
+        self._set_visible_range(new_schedule)
             
         old_schedule_dict = {entry["task_id"]: entry for entry in self.current_schedule}
         new_schedule_dict = {entry["task_id"]: entry for entry in new_schedule}

@@ -78,8 +78,14 @@ class SimulationPanel(ttk.Frame):
         right = ttk.Frame(panes, style="Card.TFrame", padding=14)
         panes.add(left, weight=2)
         panes.add(right, weight=3)
+        # ttk.Panedwindow does not support a pane-level minsize option on all
+        # Tk versions; requested frame widths keep the controls readable.
+        left.configure(width=410)
+        right.configure(width=430)
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(3, weight=1)
+        # Keep the workload list compact so the pending event queue remains
+        # visible in the same panel, even at the app's minimum window height.
+        left.rowconfigure(3, weight=0)
         left.rowconfigure(6, weight=1)
         right.columnconfigure(0, weight=1)
         right.rowconfigure(1, weight=1)
@@ -87,7 +93,7 @@ class SimulationPanel(ttk.Frame):
         ttk.Label(left, text="Inject an event", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         event_form = ttk.Frame(left, style="Card.TFrame")
         event_form.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        event_form.columnconfigure(1, weight=1)
+        event_form.columnconfigure(1, weight=1, minsize=145)
         ttk.Label(event_form, text="Event", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=3)
         kind_box = ttk.Combobox(
             event_form,
@@ -101,14 +107,25 @@ class SimulationPanel(ttk.Frame):
         ttk.Label(event_form, text="Target task", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=3)
         self.target_box = ttk.Combobox(event_form, textvariable=self.target_task, state="readonly")
         self.target_box.grid(row=2, column=1, sticky="ew", pady=3)
-        ttk.Label(event_form, text="Extra execution / new task duration", style="Card.TLabel").grid(
-            row=3, column=0, sticky="w", pady=3
-        )
-        ttk.Entry(event_form, textvariable=self.event_value).grid(row=3, column=1, sticky="ew", pady=3)
-        ttk.Label(event_form, text="New task name", style="Card.TLabel").grid(row=4, column=0, sticky="w", pady=3)
-        ttk.Entry(event_form, textvariable=self.new_task_name).grid(row=4, column=1, sticky="ew", pady=3)
-        ttk.Label(event_form, text="New deadline offset", style="Card.TLabel").grid(row=5, column=0, sticky="w", pady=3)
-        ttk.Entry(event_form, textvariable=self.event_deadline).grid(row=5, column=1, sticky="ew", pady=3)
+        extra_value_label = ttk.Label(event_form, text="Extra execution / new task duration", style="Card.TLabel")
+        extra_value_label.grid(row=3, column=0, sticky="w", pady=3)
+        extra_value_entry = ttk.Entry(event_form, textvariable=self.event_value)
+        extra_value_entry.grid(row=3, column=1, sticky="ew", pady=3)
+        self.extra_value_widgets = (extra_value_label, extra_value_entry)
+        self.optional_event_fields = {
+            4: (
+                ttk.Label(event_form, text="New task name", style="Card.TLabel"),
+                ttk.Entry(event_form, textvariable=self.new_task_name),
+            ),
+            5: (
+                ttk.Label(event_form, text="New deadline offset", style="Card.TLabel"),
+                ttk.Entry(event_form, textvariable=self.event_deadline),
+            ),
+        }
+        for row, widgets in self.optional_event_fields.items():
+            widgets[0].grid(row=row, column=0, sticky="w", pady=3)
+            widgets[1].grid(row=row, column=1, sticky="ew", pady=3)
+        kind_box.bind("<<ComboboxSelected>>", self._update_event_form_fields)
         ttk.Button(event_form, text="Queue event", command=self.queue_event).grid(
             row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
@@ -118,7 +135,7 @@ class SimulationPanel(ttk.Frame):
             left,
             columns=("task", "state", "remaining", "deadline"),
             show="headings",
-            height=9,
+            height=2,
         )
         for column, title, width in (
             ("task", "TASK", 130),
@@ -144,7 +161,7 @@ class SimulationPanel(ttk.Frame):
             left,
             columns=("at", "event", "task"),
             show="headings",
-            height=4,
+            height=3,
         )
         for column, title, width in (
             ("at", "AT", 125),
@@ -247,6 +264,29 @@ class SimulationPanel(ttk.Frame):
         results_horizontal_scroll.pack(fill="x")
         self.results_table.configure(xscrollcommand=results_horizontal_scroll.set)
         self.results_table.bind("<<TreeviewSelect>>", self._show_selected_metrics)
+        self._update_event_form_fields()
+
+    def _update_event_form_fields(self, _event=None):
+        """Show only the extra event inputs needed by the selected event."""
+        kind = self.event_kind.get()
+        if kind in {"overrun", "arrival"}:
+            for widget in self.extra_value_widgets:
+                widget.grid()
+        else:
+            for widget in self.extra_value_widgets:
+                widget.grid_remove()
+
+        visible_rows = set()
+        if kind == "arrival":
+            visible_rows = {4, 5}
+        elif kind == "deadline_change":
+            visible_rows = {5}
+        for row, widgets in self.optional_event_fields.items():
+            for widget in widgets:
+                if row in visible_rows:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
 
     def load_current_tasks(self):
         now = datetime.now().replace(second=0, microsecond=0)
@@ -279,6 +319,7 @@ class SimulationPanel(ttk.Frame):
         self.scenario_events = []
         self.simulation_start = scenario["start_time"]
         self.event_kind.set("overrun")
+        self._update_event_form_fields()
         self.event_offset.set("5")
         self.event_value.set(str(scenario["events"][0]["additional_min"]))
         self._create_engine()

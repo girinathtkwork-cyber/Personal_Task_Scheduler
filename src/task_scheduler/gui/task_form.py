@@ -19,31 +19,31 @@ class TaskForm(ttk.Frame):
     """
 
     def __init__(self, parent, on_submit):
-        super().__init__(parent, padding=(16, 13), style="Card.TFrame")
+        super().__init__(parent, padding=(16, 8), style="Card.TFrame")
         self.on_submit = on_submit
         self.editing_task_id = None
 
         self.columnconfigure(1, weight=2)
         self.columnconfigure(3, weight=1)
         self.heading = ttk.Label(self, text="Add a task", style="Section.TLabel")
-        self.heading.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        self.heading.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 5))
 
-        ttk.Label(self, text="Task name", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Task name", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=2)
         self.name_entry = ttk.Entry(self)
-        self.name_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+        self.name_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=2)
 
-        ttk.Label(self, text="Deadline date", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Deadline date (YYYY-MM-DD)", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=2)
         self.date_entry = ttk.Entry(self, width=15)
-        self.date_entry.grid(row=2, column=1, sticky="ew", pady=4, padx=(0, 12))
-        ttk.Label(self, text="Time (24-hour)", style="Card.TLabel").grid(row=2, column=2, sticky="w", pady=4)
+        self.date_entry.grid(row=2, column=1, sticky="ew", pady=2, padx=(0, 12))
+        ttk.Label(self, text="Time (HH:MM, 24-hour)", style="Card.TLabel").grid(row=2, column=2, sticky="w", pady=2)
         self.time_entry = ttk.Entry(self, width=10)
-        self.time_entry.grid(row=2, column=3, sticky="ew", pady=4)
+        self.time_entry.grid(row=2, column=3, sticky="ew", pady=2)
 
-        ttk.Label(self, text="Duration (minutes)", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(self, text="Duration (minutes)", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=2)
         self.duration_entry = ttk.Entry(self, width=10)
-        self.duration_entry.grid(row=3, column=1, sticky="ew", pady=4, padx=(0, 12))
+        self.duration_entry.grid(row=3, column=1, sticky="ew", pady=2, padx=(0, 12))
 
-        ttk.Label(self, text="Priority", style="Card.TLabel").grid(row=3, column=2, sticky="w", pady=4)
+        ttk.Label(self, text="Priority", style="Card.TLabel").grid(row=3, column=2, sticky="w", pady=2)
         self.priority_var = tk.StringVar(value="Medium")
         self.priority_dropdown = ttk.Combobox(
             self,
@@ -51,15 +51,15 @@ class TaskForm(ttk.Frame):
             values=["High", "Medium", "Low"],
             state="readonly",
         )
-        self.priority_dropdown.grid(row=3, column=3, sticky="ew", pady=4)
+        self.priority_dropdown.grid(row=3, column=3, sticky="ew", pady=2)
 
         self.submit_button = ttk.Button(self, text="Add task", style="Accent.TButton", command=self._handle_submit)
-        self.submit_button.grid(row=4, column=0, columnspan=2, pady=(9, 0), sticky="w")
+        self.submit_button.grid(row=4, column=0, columnspan=2, pady=(5, 0), sticky="w")
         ttk.Label(
             self,
-            text="Enter date as YYYY-MM-DD and time as HH:MM",
+            text="Example: 2026-10-14 at 18:30",
             style="Muted.Card.TLabel",
-        ).grid(row=4, column=2, columnspan=2, sticky="e", pady=(9, 0))
+        ).grid(row=4, column=2, columnspan=2, sticky="e", pady=(5, 0))
 
     def _handle_submit(self):
         """Validate all fields, build a task dict, call on_submit, then clear the form."""

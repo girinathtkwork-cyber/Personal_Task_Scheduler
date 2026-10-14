@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from task_scheduler.core import rescheduler
+from task_scheduler.core.schedulability import check_schedulability
 from task_scheduler.gui.gantt_view import GanttView
 from task_scheduler.gui.simulation_panel import SimulationPanel
 from task_scheduler.gui.task_form import TaskForm
@@ -29,18 +30,20 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Chronos | Personal Task Scheduler")
-        self.geometry("1120x850")
-        self.minsize(900, 700)
+        self.geometry("1120x930")
+        self.minsize(900, 800)
         self.configure(bg=COLORS["background"])
 
         self.conn = db.get_connection()
         self.selected_algorithm = tk.StringVar(value="EDF")
         self.current_tasks = []
+        self.current_schedulability = None
         self._closing = False
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self._configure_style()
         self._build_layout()
         self.refresh_schedule()
+        self.after(30_000, self._refresh_warning_clock)
 
     def _configure_style(self):
         style = ttk.Style(self)
@@ -101,7 +104,7 @@ class App(tk.Tk):
             wraplength=1050,
             justify="left",
             padx=14,
-            pady=11,
+            pady=6,
             anchor="w",
         )
 
@@ -270,6 +273,24 @@ class App(tk.Tk):
             self.task_table.selection_set(selected_id)
 
     def _update_warning_banner(self, result):
+        self.current_schedulability = result
+        self._render_warning_banner()
+
+    def _refresh_warning_clock(self):
+        """Keep the forecast banner current as task deadlines pass."""
+        self._render_warning_banner()
+        self.after(30_000, self._refresh_warning_clock)
+
+    def _render_warning_banner(self):
+        if not self.current_schedulability:
+            self.warning_label.grid_forget()
+            return
+        now = datetime.now()
+        future_tasks = [
+            task for task in self.current_tasks
+            if task.get("status", "pending") == "pending" and task["deadline"] > now
+        ]
+        result = check_schedulability(future_tasks, now=now)
         if result["feasible"]:
             self.warning_label.grid_forget()
             return
