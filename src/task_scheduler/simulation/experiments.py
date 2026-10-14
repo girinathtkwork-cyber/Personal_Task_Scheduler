@@ -49,12 +49,15 @@ def run_counterfactual(
         }
     baseline_policy = normalized_policies[0]
     baseline_misses = runs[baseline_policy]["metrics"]["deadline_misses"]
+    task_names = {task["id"]: task["name"] for task in task_inputs}
     def execution_order(timeline):
         order = []
+        last_task_id = None
         for interval in timeline:
             task_id = interval["task_id"]
-            if interval["kind"] == "execution" and (not order or order[-1] != task_id):
-                order.append(task_id)
+            if interval["kind"] == "execution" and task_id != last_task_id:
+                order.append(task_names.get(task_id, task_id))
+                last_task_id = task_id
         return order
 
     comparisons = {

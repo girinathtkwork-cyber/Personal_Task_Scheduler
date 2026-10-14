@@ -26,7 +26,7 @@ class SimulationPanel(ttk.Frame):
         self._worker_queue = queue.Queue()
         self._worker_running = False
         self._poll_job = None
-        self._task_labels = {}
+        self._target_task_ids = []
         self.policy = tk.StringVar(value="EDF")
         self.overhead = tk.StringVar(value="0")
         self.clock_text = tk.StringVar(value="Not started")
@@ -344,15 +344,23 @@ class SimulationPanel(ttk.Frame):
         self._refresh_target_choices()
 
     def _refresh_target_choices(self):
-        self._task_labels = {}
-        values = []
-        for task in self.scenario_tasks:
-            label = f"{task['name']}  ·  {task['id'][:8]}"
-            self._task_labels[label] = task["id"]
-            values.append(label)
+        selected_index = self.target_box.current()
+        selected_id = (
+            self._target_task_ids[selected_index]
+            if 0 <= selected_index < len(self._target_task_ids)
+            else None
+        )
+        self._target_task_ids = [task["id"] for task in self.scenario_tasks]
+        values = [task["name"] for task in self.scenario_tasks]
         self.target_box.configure(values=values)
-        if values and self.target_task.get() not in self._task_labels:
-            self.target_task.set(values[0])
+        if values:
+            try:
+                selected_index = self._target_task_ids.index(selected_id)
+            except ValueError:
+                selected_index = 0
+            self.target_box.current(selected_index)
+        else:
+            self.target_task.set("")
 
     def start(self):
         if self.engine is None:
@@ -388,7 +396,8 @@ class SimulationPanel(ttk.Frame):
     def _schedule_tick(self):
         self._cancel_timer()
         if self._auto_run and self.engine and self.engine.status not in {"completed", "stopped"}:
-            self._timer = self.after(80, self._tick)
+            # Give the user time to observe each event and pause playback.
+            self._timer = self.after(500, self._tick)
 
     def _tick(self):
         self._timer = None
@@ -429,10 +438,10 @@ class SimulationPanel(ttk.Frame):
                 self.scenario_tasks.append(task)
                 self._refresh_target_choices()
             else:
-                label = self.target_task.get()
-                if label not in self._task_labels:
+                target_index = self.target_box.current()
+                if target_index < 0 or target_index >= len(self._target_task_ids):
                     raise ValueError("Choose a target task.")
-                payload = {"task_id": self._task_labels[label]}
+                payload = {"task_id": self._target_task_ids[target_index]}
                 if kind == "overrun":
                     payload["additional_min"] = float(self.event_value.get())
                 elif kind == "deadline_change":
