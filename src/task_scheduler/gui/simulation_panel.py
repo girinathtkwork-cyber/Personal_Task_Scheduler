@@ -94,11 +94,18 @@ class SimulationPanel(ttk.Frame):
         event_form.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         event_form.columnconfigure(1, weight=1, minsize=145)
         ttk.Label(event_form, text="Event", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=3)
-        kind_box = ttk.Combobox(
+        event_menu = tk.Menu(event_form, tearoff=False)
+        for kind in ("arrival", "overrun", "cancel", "deadline_change", "interrupt", "resume"):
+            event_menu.add_command(
+                label=kind,
+                state="normal" if kind == "overrun" else "disabled",
+                command=lambda selected=kind: self._select_event_kind(selected),
+            )
+        kind_box = ttk.Menubutton(
             event_form,
             textvariable=self.event_kind,
-            values=("arrival", "overrun", "cancel", "deadline_change", "interrupt", "resume"),
-            state="readonly",
+            menu=event_menu,
+            direction="below",
         )
         kind_box.grid(row=0, column=1, sticky="ew", pady=3)
         ttk.Label(event_form, text="At minute", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=3)
@@ -124,7 +131,6 @@ class SimulationPanel(ttk.Frame):
         for row, widgets in self.optional_event_fields.items():
             widgets[0].grid(row=row, column=0, sticky="w", pady=3)
             widgets[1].grid(row=row, column=1, sticky="ew", pady=3)
-        kind_box.bind("<<ComboboxSelected>>", self._update_event_form_fields)
         ttk.Button(event_form, text="Queue event", command=self.queue_event).grid(
             row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
@@ -263,6 +269,10 @@ class SimulationPanel(ttk.Frame):
         results_horizontal_scroll.pack(fill="x")
         self.results_table.configure(xscrollcommand=results_horizontal_scroll.set)
         self.results_table.bind("<<TreeviewSelect>>", self._show_selected_metrics)
+        self._update_event_form_fields()
+
+    def _select_event_kind(self, kind):
+        self.event_kind.set(kind)
         self._update_event_form_fields()
 
     def _update_event_form_fields(self, _event=None):
