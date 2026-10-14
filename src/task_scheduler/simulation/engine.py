@@ -620,8 +620,7 @@ class SimulationEngine:
             names = ", ".join(task["name"] for task in missed if task["id"] in individually_impossible)
             return f"At least one task cannot finish individually before its deadline: {names}."
         return (
-            f"The selected-policy projection predicts {len(missed)} deadline miss(es), "
-            "although no remaining task is individually impossible."
+            f"The selected-policy projection predicts {len(missed)} deadline miss(es)."
         )
 
     def scenario_inputs(self):

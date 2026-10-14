@@ -68,8 +68,7 @@ class SimulationPanel(ttk.Frame):
         ttk.Button(buttons, text="Start / resume", style="Accent.TButton", command=self.start).pack(side="left")
         ttk.Button(buttons, text="Pause", command=self.pause).pack(side="left", padx=6)
         ttk.Button(buttons, text="Step to event", command=self.step).pack(side="left")
-        ttk.Button(buttons, text="Run to finish", command=self.run_to_completion).pack(side="left", padx=6)
-        ttk.Button(buttons, text="Reset", command=self.reset).pack(side="left")
+        ttk.Button(buttons, text="Reset", command=self.reset).pack(side="left", padx=(8, 0))
         ttk.Label(buttons, textvariable=self.clock_text, style="Section.TLabel").pack(side="right", padx=(10, 0))
 
         panes = ttk.Panedwindow(self, orient="horizontal")
@@ -250,12 +249,12 @@ class SimulationPanel(ttk.Frame):
             height=8,
         )
         for column, title, width in (
-            ("policy", "POLICY", 80),
-            ("completed", "DONE", 60),
-            ("misses", "MISSES", 65),
-            ("utilization", "CPU %", 70),
-            ("tardiness", "TARDY MIN", 80),
-            ("order", "EXECUTION ORDER", 210),
+            ("policy", "POLICY", 65),
+            ("completed", "DONE", 45),
+            ("misses", "MISSES", 55),
+            ("utilization", "CPU %", 55),
+            ("tardiness", "TARDY MIN", 70),
+            ("order", "EXECUTION ORDER", 190),
         ):
             self.results_table.heading(column, text=title)
             self.results_table.column(column, width=width, minwidth=45)
@@ -379,15 +378,6 @@ class SimulationPanel(ttk.Frame):
             self._auto_run = False
         if self.engine:
             self._render_state(self.engine.step())
-
-    def run_to_completion(self):
-        if self.engine is None:
-            self.start()
-            self._cancel_timer()
-            self._auto_run = False
-        if self.engine:
-            self._auto_run = True
-            self._schedule_tick()
 
     def reset(self):
         self._auto_run = False
